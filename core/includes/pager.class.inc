@@ -68,16 +68,61 @@ class PagerDefault extends SelectQueryExtender {
     }
     $this->ensureElement();
 
-    $total_items = $this->getCountQuery()->execute()->fetchField();
-    $current_page = pager_default_initialize($total_items, $this->limit, $this->element);
-    $this->range($current_page * $this->limit, $this->limit);
+    // Extract the current page from the request.
+    $page = pager_find_page($this->element);
 
-    // Now that we've added our pager-based range instructions, run the query normally.
-    return $this->query->execute();
+    // Rather than rely on the countQuery, add a query hint to prepare for a
+    // FOUND_ROWS() call a bit later on. That means we don't need to load the
+    // entire table index twice, which should see a nice speed increase when
+    // paging through large tables, esepecially on InnoDB.
+    $this->query->setHints('SQL_CALC_FOUND_ROWS');
+
+    // We usually calculate the total number of pages as ceil(items / limit) but
+    // now that we don't run a countQuery, we don't know the total number of rows
+    // before running the pager_query. For now we assume that the total items is
+    // the current page number multiplied by the limit. We recalculate when we
+    // know the correct total number.
+    $this->range($page * $this->limit, $this->limit);
+
+    // Now that we've added our pager-based range instructions, run the query
+    // normally.
+    $result = $this->query->execute();
+
+    // And now we can fetch the total number of results, had there not been
+    // a range.
+    $total_items = $this->connection->query('SELECT FOUND_ROWS()')->fetchField();
+
+    // This does unfortunately mean that a user can override the page variable
+    // in the query string and end up with an empty pager. Previously this would
+    // make this default to the last page. We can emulate this behaviour by
+    // checking the total number of rows returned and re-run an adjusted query
+    // in that case.
+    //
+    // What we do now is check if our query range was out of bounds, which can
+    // happen if the user manually overrode the page variable in the query
+    // string. If no rows were returned and if we're not looking at the first
+    // page of this pager, adjust the range to return the last page of results
+    // only, just as we would normally do.
+    if (!empty($page) && (($page * $this->limit) > $total_items)) {
+      // Calculate the new range and re-run the pager query to return the last
+      // page of results.
+      $page_max = ceil($total_items / $this->limit) - 1;
+      $this->range($page_max * $this->limit, $this->limit);
+      // No need to re-count all rows, so remove the hint.
+      $this->query->setHints('');
+      $result = $this->query->execute();
+    }
+
+    // Initialize pager variables for the current pager.
+    pager_default_initialize($total_items, $this->limit, $this->element);
+
+    // Return the query results.
+    return $result;
   }
 
   /**
    * Ensure that there is an element associated with this query.
+   *
    * If an element was not specified previously, then the value of the
    * $maxElement counter is taken, after which the counter is incremented.
    *
