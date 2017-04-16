@@ -320,6 +320,13 @@ abstract class Query implements QueryPlaceholderInterface {
   protected $comments = array();
 
   /**
+   * Query hints or flags that can be set on a query.
+   *
+   * @var string
+   */
+  protected $hints = '';
+
+  /**
    * Constructs a Query object.
    *
    * @param DatabaseConnection $connection
@@ -432,6 +439,20 @@ abstract class Query implements QueryPlaceholderInterface {
    */
   public function &getComments() {
     return $this->comments;
+  }
+
+  /**
+   * Sets the hints or flags on a query.
+   *
+   * Hints and flags directly affect the way in which the query is run
+   * on the database server. Their syntax is database specific, so they
+   * should be used internally in database-specific classes only.
+   *
+   * @param $hints
+   *   The hint string to be inserted into the query.
+   */
+  public function setHints($hints) {
+    $this->hints = $hints;
   }
 }
 
